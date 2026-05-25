@@ -55,7 +55,7 @@ def get_local_cited_sources(df, num_of_cited_sources):
             y=list(range(len(source_counts))),
             mode="markers+text",
             marker=dict(
-                size=18 + 6 * (source_counts["N. of Local Citations"] / source_counts["N. of Local Citations"].max()),
+                size=18 + 6 * (source_counts["N. of Local Citations"] / (source_counts["N. of Local Citations"].max() or 1)),
                 color=source_counts["N. of Local Citations"],
                 colorscale=[[0, "#B3D1F2"], [1, "#5567BB"]],
                 line=dict(width=1, color="#E0E0E0"),
@@ -99,6 +99,8 @@ def get_local_cited_sources(df, num_of_cited_sources):
 
     # Set x-axis ticks to 0, 50, 100, etc.
     max_x = source_counts["N. of Local Citations"].max()
+    if pd.isna(max_x) or max_x <= 0:
+        max_x = 0
     tick_step = 50
     x_ticks = list(range(0, int(max_x) + tick_step, tick_step))
     if x_ticks[-1] < max_x:

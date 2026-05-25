@@ -68,7 +68,7 @@ def get_cited_countries(df, num_of_cited_countries, cited_countries_measure):
             y=list(range(n)),
             mode="markers+text",
             marker=dict(
-                size=18 + 6 * (x_values / x_values.max()),
+                size=18 + 6 * (x_values / (x_values.max() or 1)),
                 color=x_values,
                 colorscale=[[0, "#B3D1F2"], [1, "#5567BB"]],
                 line=dict(width=1, color="#E0E0E0"),
@@ -100,6 +100,8 @@ def get_cited_countries(df, num_of_cited_countries, cited_countries_measure):
 
     # Set x-axis ticks
     max_x = x_values.max()
+    if pd.isna(max_x) or max_x <= 0:
+        max_x = 0
     tick_step = 5 if max_x <= 50 else int(max_x // 10) or 1
     x_ticks = list(range(0, int(max_x) + tick_step, tick_step))
     if x_ticks[-1] < max_x:

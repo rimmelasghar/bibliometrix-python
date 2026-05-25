@@ -79,7 +79,7 @@ def get_local_cited_documents(df, num_of_local_cited_docs, field_separator, fast
             y=list(range(len(df_documents))),
             mode="markers+text",
             marker=dict(
-                size=18 + 6 * (df_documents["Local Citations"] / df_documents["Local Citations"].max()),
+                size=18 + 6 * (df_documents["Local Citations"] / (df_documents["Local Citations"].max() or 1)),
                 color=df_documents["Local Citations"],
                 colorscale=[[0, "#B3D1F2"], [1, "#5567BB"]],
                 line=dict(width=1, color="#E0E0E0"),
@@ -113,6 +113,8 @@ def get_local_cited_documents(df, num_of_local_cited_docs, field_separator, fast
 
     # Set x-axis ticks to 0, 5, 10, etc.
     max_x = df_documents["Local Citations"].max()
+    if pd.isna(max_x) or max_x <= 0:
+        max_x = 0
     tick_step = 5
     x_ticks = list(range(0, int(max_x) + tick_step, tick_step))
     if x_ticks[-1] < max_x:
