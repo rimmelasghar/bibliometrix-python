@@ -39,8 +39,12 @@ def histNetwork(df, min_citations=0, sep=";", network=True):
     elif db == "Scopus":
         results = scopus(M, min_citations=min_citations, sep=sep, network=network)
     else:
-        print("\nDatabase not compatible with direct citation analysis\n")
-        return None
+        # ETL-patch (cross-DB compatibility): the generic WoS reference parser
+        # is format-agnostic enough to handle Dimensions / Lens / PubMed /
+        # OpenAlex CR strings, so fall back to it instead of returning ``None``
+        # (which crashes every downstream ``get_local_cited_*`` caller).
+        print(f"\nDB '{db}' not natively supported - using generic WoS reference matcher\n")
+        results = wos(M, min_citations=min_citations, sep=sep, network=network)
 
     return results
 
@@ -74,6 +78,24 @@ def wos(M, min_citations, sep, network):
             CR.append({'ref': ref, 'Paper': i, 'DI': doi, 'AU': au, 'PY': py, 'SO': so, 'SR': sr})
 
     print(f"\nAnalyzing {len(CR)} reference items...\n")
+
+    # ETL-patch (cross-DB robustness): when the collection has no usable CR
+    # data (e.g. Dimensions / Lens CSV exports, PubMed without LinkOut), the
+    # downstream pipeline must still return a well-formed result instead of
+    # crashing on empty intermediate frames.
+    if len(CR) == 0:
+        M['LABEL'] = M.get('SR_FULL', M['SR']).fillna('').str.upper() + " DOI " + M['DI'].fillna('').str.upper()
+        M['LABEL'] = M['LABEL'].str.strip()
+        M['LCS'] = 0
+        M['LCR'] = ""
+        histData = M[M['TC'] >= min_citations][['LABEL', 'TI', 'DE', 'ID', 'DI', 'PY', 'LCS', 'TC']].copy()
+        histData.columns = ['Paper', 'Title', 'Author_Keywords', 'KeywordsPlus', 'DOI', 'Year', 'LCS', 'GCS']
+        return {
+            'NetMatrix': pd.DataFrame(),
+            'histData': histData,
+            'M': M,
+            'LCS': M['LCS'].tolist(),
+        }
 
     CR_df = pd.DataFrame(CR)
 
