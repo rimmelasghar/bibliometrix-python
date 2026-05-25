@@ -32,7 +32,14 @@ def get_world_map_collaboration(df, edges_min=1, edgesize=5):
 
     # Costruisci matrice di collaborazione
     net = biblionetwork(M, analysis="collaboration", network="countries")
-    net_df = pd.DataFrame(net)
+    # ETL-patch (cross-DB robustness): when ``biblionetwork`` cannot build a
+    # collaboration matrix (e.g. no parsable AU_CO field for the entire
+    # collection), fall back to an empty adjacency so downstream code keeps
+    # working and the user gets a country-frequency-only map.
+    if net is None:
+        net_df = pd.DataFrame()
+    else:
+        net_df = pd.DataFrame(net)
 
     # Costruisci rete
     G = nx.from_pandas_adjacency(net_df)
