@@ -1651,6 +1651,25 @@ def biblio_json(data, source, type, author):
     Returns:
         A JSON string containing the formatted data
     """
+    # ------------------------------------------------------------------ #
+    #  ETL fast-path: try the new declarative pipeline first.            #
+    #  Falls back to the legacy per-DB logic on any failure so existing  #
+    #  behaviour is preserved.                                           #
+    # ------------------------------------------------------------------ #
+    if not type.endswith("zip"):
+        try:
+            from www.services.etl import convert2df
+            ft = type.rsplit(".", 1)[-1].lower()
+            df = convert2df(source=source, file_path=data, file_type=ft)
+            # Honour the legacy 'author' toggle: surname-only vs full-name
+            if author == "surname" and "AF" in df.columns:
+                df = df.drop(columns=["AF"])
+            elif author == "fullname" and "AU" in df.columns:
+                df = df.drop(columns=["AU"])
+            return df.to_json(orient="records", force_ascii=False, indent=4)
+        except Exception as exc:  # pragma: no cover — defensive
+            print(f"[biblio_json] ETL fast-path failed ({exc!r}); falling back to legacy.")
+
     # Handle ZIP files - extract and process multiple files
     if type.endswith("zip"):
         return process_zip_file(data, source, author)
