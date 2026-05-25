@@ -2,3 +2,16 @@ __pycache__/
 bibliovenv/
 Bibenv/
 .idea/
+@"
+
+env/
+out/dashboard_compat_errors.log
+out/dashboard_compat.log
+compat_run.log
+installed.txt
+requirements.utf8.txt
+**/__pycache__/
+**/.ipynb_checkpoints/
+"@ | Add-Content .gitignore
+git add .gitignore
+git commit -m "chore(gitignore): exclude venv, run logs, and notebook checkpoints"
