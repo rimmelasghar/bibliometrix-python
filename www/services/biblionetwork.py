@@ -5,6 +5,13 @@ from .cocmatrix import *
 def biblionetwork(M, analysis="coupling", network="authors", n=None, sep=";", short=False, shortlabel=True, remove_terms=None, synonyms=None):
     
     def crossprod(A, B):
+        # ETL-patch (cross-DB robustness): when the underlying field is
+        # missing or empty for every record (e.g. Lens with no parsed
+        # country names) ``cocMatrix`` returns ``None`` instead of an
+        # empty matrix.  Returning ``None`` here lets the caller treat
+        # the situation as "no network" without crashing on ``None.T``.
+        if A is None or B is None:
+            return None
         return A.T @ B  # Moltiplicazione matriciale per ottenere il prodotto incrociato
 
     NetMatrix = None
