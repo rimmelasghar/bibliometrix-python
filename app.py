@@ -853,9 +853,265 @@ with ui.tags.div(id="mainContent", class_="main-content"):
                     """
                 ),
 
+        # Helper: render a compact preview of a normalised DataFrame so the
+        # user can immediately see how the ETL standardised the live/CSV
+        # payload (column names, list-shaped fields, integer casts, etc.).
+        def _normalised_preview(frame, source_label="", query_label="", n_rows=20):
+            import pandas as _pd
+            from www.services.etl import SCHEMA as _SCHEMA
+
+            if frame is None or len(frame) == 0:
+                return ui.TagList()
+
+            mandatory = [c for c, s in _SCHEMA.items() if s.get("mandatory")]
+            preferred = [
+                "DB", "UT", "DI", "PY", "TI", "AU", "SO", "TC", "C1", "DE", "SR",
+            ]
+            cols = [c for c in preferred if c in frame.columns]
+            cols += [c for c in frame.columns if c not in cols][: max(0, 15 - len(cols))]
+
+            preview = frame[cols].head(n_rows).copy()
+
+            def _fmt(v):
+                if isinstance(v, list):
+                    s = "; ".join(str(x) for x in v[:6])
+                    if len(v) > 6:
+                        s += f"  …(+{len(v) - 6})"
+                    return s
+                if v is None:
+                    return ""
+                if isinstance(v, float) and _pd.isna(v):
+                    return ""
+                return str(v)
+
+            preview = preview.map(_fmt)
+
+            html_table = preview.to_html(
+                index=False,
+                border=0,
+                classes="table table-sm table-striped table-hover",
+                escape=True,
+            )
+
+            schema_badges = "".join(
+                f'<span style="display:inline-block;background:#e6e9ff;color:#5567BB;'
+                f'padding:2px 8px;border-radius:10px;font-size:11px;margin:2px;">{c}</span>'
+                for c in mandatory if c in frame.columns
+            )
+
+            label = ""
+            if source_label or query_label:
+                label = (
+                    f' from <b>{source_label}</b>'
+                    + (f' (<code>{query_label}</code>)' if query_label else "")
+                )
+
+            html = f"""
+            <div style="margin-top:18px;">
+              <h4 style="color:#5567BB; margin-bottom:4px;">🧪 Normalised preview</h4>
+              <p style="color:gray; font-size:12px; margin-top:0;">
+                First {len(preview)} of {len(frame)} record(s){label}, projected onto the
+                standard ETL schema. List-shaped columns (AU, C1, DE, CR, …) are
+                shown joined with "<code>;</code>" for readability only — the
+                underlying DataFrame keeps real Python lists.
+              </p>
+              <div style="margin:6px 0 10px 0;">
+                <span style="color:gray;font-size:12px;">Mandatory columns present:</span>
+                {schema_badges}
+              </div>
+              <div style="max-height:360px; overflow:auto; border:1px solid #eef;
+                          border-radius:6px; font-size:12px;">
+                {html_table}
+              </div>
+            </div>
+            """
+            return ui.HTML(html)
+
         with ui.nav_panel("None", value="API"):
-            ui.h3("🚧 Warning: API is under construction 🚧")
-        
+            ui.h3("�️ Live API query", style="color: #5567BB;")
+            ui.p(
+                "Run a live query against OpenAlex or PubMed. Results are normalised "
+                "by the ETL pipeline into the standard 35-column schema and loaded "
+                "as the current dataset (available to every analytical panel)."
+            )
+            with ui.layout_columns(col_widths=(3, 5, 2, 2)):
+                ui.input_select(
+                    "api_source",
+                    "Source",
+                    choices={"openalex": "OpenAlex", "pubmed": "PubMed"},
+                    selected="openalex",
+                )
+                ui.input_text(
+                    "api_query",
+                    "Query",
+                    value="bibliometrics",
+                    placeholder="e.g. bibliometrics OR scientometrics",
+                )
+                ui.input_numeric("api_max", "Max records", value=50, min=1, max=10000, step=10)
+                ui.input_action_button("api_run", "Fetch", icon=ICONS["play"])
+            ui.input_text(
+                "api_mailto",
+                "Polite-pool e-mail (optional, recommended for OpenAlex)",
+                value="",
+                placeholder="you@example.org",
+            )
+
+            @render.ui
+            @reactive.event(input.api_run)
+            def api_run_handler():
+                from www.services.etl.api_retriever import fetch_dataframe
+                from www.services.etl import validate
+                src = input.api_source()
+                q = (input.api_query() or "").strip()
+                if not q:
+                    return ui.markdown("⚠️ Please enter a query.")
+                try:
+                    n = int(input.api_max() or 50)
+                except Exception:
+                    n = 50
+                mailto = (input.api_mailto() or "").strip() or None
+                try:
+                    kwargs = {"mailto": mailto} if (src == "openalex" and mailto) else {}
+                    fetched = fetch_dataframe(src, q, max_results=n, **kwargs)
+                except Exception as exc:
+                    return ui.markdown(f"❌ Live fetch failed: `{exc!r}`")
+                if fetched is None or len(fetched) == 0:
+                    return ui.markdown("⚠️ No records returned.")
+                df.set(fetched)
+                reset_all_analyses()
+                report = validate(fetched)
+                status = "✅" if report.get("ok") else "⚠️"
+                # Inline JS: reveal both sidebars after the server pushes the
+                # newly-rendered sidebar_2 into the DOM (handled by the
+                # MutationObserver registered at app start-up).
+                reveal_js = ui.tags.script(
+                    "setTimeout(function(){"
+                    "  if (typeof setSidebarState === 'function') setSidebarState(true);"
+                    "  var s1=document.getElementById('sidebar');"
+                    "  var s2=document.getElementById('sidebar_2');"
+                    "  if (s1) s1.classList.remove('sidebar-hidden');"
+                    "  if (s2) s2.classList.remove('sidebar-hidden');"
+                    "  var c=document.getElementById('mainContent');"
+                    "  if (c) c.classList.remove('full-width');"
+                    "}, 300);"
+                )
+                return ui.TagList(
+                    ui.markdown(
+                        f"{status} Loaded **{len(fetched)} records** from "
+                        f"**{src}** (`{q}`). The dataset is now active — open any "
+                        "analytical panel from the sidebar.\n\n"
+                        f"Validation: `{report}`"
+                    ),
+                    _normalised_preview(fetched, src, q),
+                    reveal_js,
+                )
+
+            # --- Load a standardised (ETL-produced) CSV ----------------- #
+            ui.hr()
+            ui.h3("📥 Load standardised CSV", style="color: #5567BB;")
+            ui.p(
+                "Upload a CSV produced by the ETL pipeline (e.g. one of the "
+                "files written by ``tests/run_etl.py`` under ``out/etl/``). "
+                "It is loaded directly as the current dataset — every "
+                "analytical panel becomes available with no re-parsing."
+            )
+            with ui.layout_columns(col_widths=(8, 4)):
+                ui.input_file(
+                    "csv_unified_file",
+                    "Unified CSV file",
+                    accept=[".csv"],
+                    multiple=False,
+                )
+                ui.input_action_button(
+                    "csv_unified_run", "Load CSV", icon=ICONS["play"]
+                )
+
+            @render.ui
+            @reactive.event(input.csv_unified_run)
+            def csv_unified_handler():
+                import ast
+                import pandas as pd
+                from www.services.etl import validate, SCHEMA
+                from www.services.etl.mappings import LIST_COLUMNS, INT_COLUMNS
+
+                files = input.csv_unified_file()
+                if not files:
+                    return ui.markdown("⚠️ Please choose a CSV first.")
+                path = files[0]["datapath"]
+
+                def _parse_list(v):
+                    if isinstance(v, list):
+                        return v
+                    if v is None or (isinstance(v, float) and pd.isna(v)):
+                        return []
+                    s = str(v).strip()
+                    if not s:
+                        return []
+                    if s.startswith("[") and s.endswith("]"):
+                        try:
+                            parsed = ast.literal_eval(s)
+                            if isinstance(parsed, list):
+                                return [str(x) for x in parsed]
+                        except Exception:
+                            pass
+                    # Fallback: split on common bibliometrix separators.
+                    for sep in [";", "|", ","]:
+                        if sep in s:
+                            return [t.strip() for t in s.split(sep) if t.strip()]
+                    return [s]
+
+                try:
+                    loaded = pd.read_csv(path, dtype=str, keep_default_na=False)
+                except Exception as exc:
+                    return ui.markdown(f"❌ Could not read CSV: `{exc!r}`")
+
+                # Coerce list columns back to actual Python lists and
+                # int columns back to integers so downstream functions
+                # see the same shapes they would after convert2df().
+                for col in loaded.columns:
+                    if col in LIST_COLUMNS:
+                        loaded[col] = loaded[col].map(_parse_list)
+                    elif col in INT_COLUMNS:
+                        loaded[col] = pd.to_numeric(
+                            loaded[col], errors="coerce"
+                        ).fillna(0).astype(int)
+
+                missing = [
+                    c for c, spec in SCHEMA.items()
+                    if spec.get("mandatory") and c not in loaded.columns
+                ]
+                if missing:
+                    return ui.markdown(
+                        "❌ This does not look like a standardised ETL CSV — "
+                        f"missing mandatory columns: `{missing}`."
+                    )
+
+                df.set(loaded)
+                reset_all_analyses()
+                report = validate(loaded)
+                status = "✅" if report.get("ok") else "⚠️"
+                reveal_js = ui.tags.script(
+                    "setTimeout(function(){"
+                    "  if (typeof setSidebarState === 'function') setSidebarState(true);"
+                    "  var s1=document.getElementById('sidebar');"
+                    "  var s2=document.getElementById('sidebar_2');"
+                    "  if (s1) s1.classList.remove('sidebar-hidden');"
+                    "  if (s2) s2.classList.remove('sidebar-hidden');"
+                    "  var c=document.getElementById('mainContent');"
+                    "  if (c) c.classList.remove('full-width');"
+                    "}, 300);"
+                )
+                return ui.TagList(
+                    ui.markdown(
+                        f"{status} Loaded **{len(loaded)} records** from "
+                        f"`{files[0]['name']}`. The dataset is now active — open "
+                        "any analytical panel from the sidebar.\n\n"
+                        f"Validation: `{report}`"
+                    ),
+                    _normalised_preview(loaded, "CSV", files[0]["name"]),
+                    reveal_js,
+                )
+
         with ui.nav_panel("None", value="collections"):
             ui.h3("🚧 Warning: Merge Collection is under construction 🚧")
 
@@ -8185,7 +8441,7 @@ with ui.tags.div(id="mainContent", class_="main-content"):
 
 # --- Sidebar Management ---
 @render.express()
-@reactive.event(input.start_button)
+@reactive.event(input.start_button, input.api_run, input.csv_unified_run)
 def toggle_sidebar():
     with ui.tags.div(id="sidebar_2", class_="custom-sidebar"):
         with ui.accordion(id="sidebar_accordion_data", multiple=False, open=False):
@@ -8344,10 +8600,17 @@ ui.tags.script("""
     });
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // Show both sidebars when 'start_button' is clicked
+    // Show both sidebars when 'start_button', 'api_run' or 'csv_unified_run' is clicked
     document.addEventListener("click", function(e) {
-        if (e.target && e.target.id === "start_button") {
-            setSidebarState(true);
+        // The clickable area is sometimes a child <i>/<span>; walk up the
+        // DOM to find the nearest ancestor button id we care about.
+        let el = e.target;
+        while (el && el !== document) {
+            if (el.id === "start_button" || el.id === "api_run" || el.id === "csv_unified_run") {
+                setSidebarState(true);
+                break;
+            }
+            el = el.parentNode;
         }
     });
 """)
